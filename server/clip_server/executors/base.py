@@ -19,19 +19,32 @@ from opentelemetry.trace import NoOpTracer
 
 
 class BaseCLIPEncoder(Executor):
-    """Template Method: 定义 encode/rank 骨架，子类填充模型构建与推理细节。
+    """CLIP 编码器模板基类。*新增推理后端只需覆盖 3 个必须方法 + 设置 3 个属性。*
 
-    Hook Points (子类必须实现):
-        _build_model(name, **kwargs)   — 构建模型实例
-        _encode_image_batch(data)      — 图像 minibatch 编码 + 后处理
-        _encode_text_batch(data)       — 文本 minibatch 编码 + 后处理
+    ── 必须覆盖（3 methods + 3 attrs）─────────────────────────
+    方法:
+        _build_model(name, **kwargs) -> model
+            构建模型实例。kwargs 透传子类 __init__ 的额外参数。
 
-    Hook Points (子类可选覆盖):
-        RUNTIME                        — trace 标记 'torch'/'onnx'/'tensorrt'
-        _return_np                     — 预处理是否返回 numpy (ONNX=True)
-        _inference_context             — 推理上下文管理器 (torch=inference_mode)
-        _resolve_device(device)        — 设备解析 (TensorRT 覆盖加入断言)
-        _post_init(**kwargs)           — __init__ 末尾钩子 (ONNX session 启动等)
+        _encode_image_batch(batch_data: dict) -> np.ndarray
+            单 minibatch 图像编码 + 后处理，返回 float32 numpy 数组。
+
+        _encode_text_batch(batch_data: dict) -> np.ndarray
+            单 minibatch 文本编码 + 后处理，返回 float32 numpy 数组。
+
+    类属性:
+        RUNTIME: str    — tracing 标记，如 'torch' / 'onnx' / 'tensorrt'。
+        _return_np: bool — 预处理输出格式。numpy=True / tensor=False。
+
+    实例属性 (在 __init__ 中设置):
+        _preproc_image_kwargs: dict — 透传给 preproc_image() 的额外参数。
+        _preproc_text_kwargs:  dict — 透传给 preproc_text() 的额外参数。
+
+    ── 可选覆盖 ─────────────────────────────────────────────
+        _resolve_device(device)        — 设备解析逻辑 (默认: 自动 cpu/cuda)
+        _post_init(**kwargs)           — __init__ 末尾钩子 (ONNX session 等)
+        _inference_context             — 推理上下文管理器 (默认: nullcontext)
+        _cleanup_model()               — 模型资源释放 (默认: 空)
     """
 
     RUNTIME: str = None
