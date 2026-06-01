@@ -53,7 +53,7 @@ def _version_check(package: str = None, github_repo: str = None):
                         width=50,
                     )
                 )
-    except:
+    except Exception:
         # no network, too slow, PyPi is down
         pass
 
