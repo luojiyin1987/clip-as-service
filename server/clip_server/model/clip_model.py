@@ -25,34 +25,37 @@ class BaseCLIPModel:
 
 
 class CLIPModel(BaseCLIPModel):
-    def __new__(cls, name: str, **kwargs):
-        if cls is CLIPModel:
-            if name in _OPENCLIP_MODELS:
-                from clip_server.model.openclip_model import OpenCLIPModel
+    def __init__(self, name: str, **kwargs):
+        if type(self) is CLIPModel:
+            raise TypeError(
+                'CLIPModel cannot be instantiated directly. '
+                'Use CLIPModel.create(name) instead.'
+            )
+        super().__init__(name, **kwargs)
 
-                instance = super().__new__(OpenCLIPModel)
-            elif name in _MULTILINGUALCLIP_MODELS:
-                from clip_server.model.mclip_model import MultilingualCLIPModel
+    @classmethod
+    def create(cls, name: str, **kwargs):
+        if name in _OPENCLIP_MODELS:
+            from clip_server.model.openclip_model import OpenCLIPModel
 
-                instance = super().__new__(MultilingualCLIPModel)
-            elif name in _CNCLIP_MODELS:
-                from clip_server.model.cnclip_model import CNClipModel
+            return OpenCLIPModel(name, **kwargs)
+        elif name in _MULTILINGUALCLIP_MODELS:
+            from clip_server.model.mclip_model import MultilingualCLIPModel
 
-                instance = super().__new__(CNClipModel)
-            else:
-                raise ValueError(
-                    'CLIP model {} not found; below is a list of all available models:\n{}'.format(
-                        name,
-                        ''.join(
-                            [
-                                '\t- {}\n'.format(i)
-                                for i in list(_OPENCLIP_MODELS.keys())
-                                + list(_MULTILINGUALCLIP_MODELS.keys())
-                                + list(_CNCLIP_MODELS.keys())
-                            ]
-                        ),
-                    )
-                )
+            return MultilingualCLIPModel(name, **kwargs)
+        elif name in _CNCLIP_MODELS:
+            from clip_server.model.cnclip_model import CNClipModel
+
+            return CNClipModel(name, **kwargs)
         else:
-            instance = super().__new__(cls)
-        return instance
+            available = '\n'.join(
+                f'\t- {k}'
+                for k in sorted(
+                    list(_OPENCLIP_MODELS.keys())
+                    + list(_MULTILINGUALCLIP_MODELS.keys())
+                    + list(_CNCLIP_MODELS.keys())
+                )
+            )
+            raise ValueError(
+                f'CLIP model {name} not found; available models:\n{available}'
+            )

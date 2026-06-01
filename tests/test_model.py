@@ -17,7 +17,7 @@ from clip_server.model.cnclip_model import CNClipModel
     ],
 )
 def test_torch_model(name, model_cls):
-    model = CLIPModel(name)
+    model = CLIPModel.create(name)
     assert model.__class__ == model_cls
 
 

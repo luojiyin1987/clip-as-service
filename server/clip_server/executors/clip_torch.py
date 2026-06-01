@@ -70,7 +70,7 @@ class CLIPEncoder(BaseCLIPEncoder):
         torch.set_num_interop_threads(1)
 
     def _build_model(self, name: str, **kwargs):
-        return CLIPModel(
+        return CLIPModel.create(
             name,
             device=self._device,
             jit=kwargs.get('jit', False),
