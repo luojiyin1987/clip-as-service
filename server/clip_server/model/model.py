@@ -33,7 +33,7 @@ try:
     from clip_server.model.flash_attention import MultiheadAttention
 
     FLASH_ATTENTION_AVAILABLE = True
-except:
+except ImportError:
     FLASH_ATTENTION_AVAILABLE = False
 
 

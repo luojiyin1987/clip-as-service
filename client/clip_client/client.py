@@ -36,7 +36,7 @@ class Client:
             r = urlparse(server)
             _port = r.port
             self._scheme = r.scheme
-        except:
+        except Exception:
             raise ValueError(f'{server} is not a valid scheme')
 
         _tls = False
@@ -64,6 +64,16 @@ class Client:
         self._authorization = credential.get(
             'Authorization', os.environ.get('CLIP_AUTH_TOKEN')
         )
+
+    def close(self):
+        self._client.close()
+        self._async_client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def profile(self, content: Optional[str] = '') -> Dict[str, float]:
         """Profiling a single query's roundtrip including network and computation latency. Results is summarized in a table.
