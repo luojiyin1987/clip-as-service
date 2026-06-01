@@ -947,3 +947,55 @@ b98b045  refactor: extract BaseCLIPEncoder                   ← 核心
 - `encode()` 从 3 份副本变成 1 份 → 修 bug 只需改一处
 - 新增后端从 ~200 行 → ~70 行 → 维护成本降 65%
 - 公共逻辑和差异逻辑的边界被代码显式表达 → 可读性提升
+
+### 9.8 框架设计层的改进
+
+以上是代码层面的重构。在框架设计层面，还有三个跨切面的问题值得关注：
+
+**A. 客户端生命周期管理**
+
+原始 `Client` 类在 `__init__` 中创建了两个 Jina 内部客户端（`self._client` 和 `self._async_client`），但从未释放。这违反了「谁创建谁销毁」的资源管理原则。修复方案：
+
+```python
+# ✅ 显式生命周期 + context manager
+class Client:
+    def close(self):
+        self._client.close()
+        self._async_client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+# 使用方式
+with Client('grpc://0.0.0.0:51000') as c:
+    embeddings = c.encode(['hello world'])
+```
+
+设计原则：任何持有外部连接/资源的对象都应该可 `close()` 且支持 `with` 语法。
+
+**B. 错误处理的粒度控制**
+
+项目中有 5 处裸 `except:`（已全部修复），但修复方式不同，体现了错误处理的层次设计：
+
+| 原位置 | 期望捕获 | 修复为 | 原则 |
+|--------|---------|--------|------|
+| `helper.py` | 网络/PyPI 异常 | `except Exception` | 不吞 `KeyboardInterrupt` |
+| `client.py` | URL 解析异常 | `except Exception` | 同上 |
+| `model.py` | flash-attn 未安装 | `except ImportError` | 精确捕获可选依赖 |
+| `simple_tokenizer.py` | BPE 字节未命中 | `except ValueError` | 精确捕获字符串操作 |
+
+原则：`except Exception` 是保底，`except ImportError` / `except ValueError` 等精确类型让意图自文档化。
+
+**C. 全局状态污染**
+
+`Client._prepare_streaming()` 直接写 `os.environ['JINA_GRPC_*'] = '0'` 来禁用 gRPC 消息大小限制。这是跨请求的进程级副作用：
+
+```python
+# ❌ 进程级全局变量，非线程安全、不可组合
+os.environ['JINA_GRPC_SEND_BYTES'] = '0'
+```
+
+在框架设计中，配置应通过显式参数传递而非隐式修改全局状态。由于 Jina 内部通过环境变量读取此配置，彻底修复需要改动 Jina 框架本身。识别这种「自己无法修复但值得知道的坏味道」也是学习的一部分。
