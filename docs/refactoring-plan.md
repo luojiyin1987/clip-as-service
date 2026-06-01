@@ -1,6 +1,6 @@
 # CLIP-as-service 重构路径文档
 
-> 状态：已完成 | 日期：2026-06-01 | 目标版本：0.9.0
+> 状态：已完成 | 日期：2026-06-01 | 7 次提交，11 个学习点
 
 ## 一、重构目标
 
@@ -921,19 +921,30 @@ model = CLIPModel.create('ViT-B-32')  # 语义：从工厂创建合适的模型
 
 ### 9.6 重构的提交节奏
 
-四层递进，每层一个独立提交：
+七次提交，从核心到外围、从重构到文档：
 
 ```
-5802e44  refactor: replace CLIPModel.__new__ with create()   ← 模型层
-256eb05  docs: hook interface + backend template              ← 文档层
-3dfffc3  feat: resource cleanup hooks                        ← 资源层
-b98b045  refactor: extract BaseCLIPEncoder                   ← 核心
+b98b045  refactor: extract BaseCLIPEncoder                   ← 核心骨架
+3dfffc3  feat: resource cleanup hooks                        ← 资源管理
+256eb05  docs: hook interface + backend template             ← 接口文档
+5802e44  refactor: replace CLIPModel.__new__ with create()   ← 模型工厂
+9972f00  fix: client lifecycle + eliminate all bare excepts  ← 框架层修复
+f5ff58d  docs: add key learnings (9.1-9.7)                   ← 学习记录
+44737be  docs: add framework design learnings (9.8)           ← 学习记录
 ```
 
-原则：
-- 每个提交做一件事，回滚不牵连
-- 先修 bug（Step 1），再抽基类（Step 2-5），再加特性（cleanup/template），最后改模型层
-- 模型层的改动放最后，因为它的调用方最多、风险最高
+提交模式：5 个代码提交 + 2 个文档提交，交替进行。写完一段代码立即记录下 learnings，避免事后遗忘。
+
+**时序上的设计考量**：
+
+```
+先修 bug（含在 b98b045）  →  零风险，立即止损
+再抽基类（b98b045~5802e44）  →  核心重构，风险最大放最前
+再加特性（3dfffc3, 256eb05）  →  增量，依赖基类稳定
+最后改框架层（9972f00）       →  跨模块改动，涉及 client/server 两边
+```
+
+模型工厂（5802e44）放在基类重构之后但在框架层修复之前，因为它的调用方（`clip_torch._build_model`）刚被改写，改动点最热、上下文最清晰。
 
 ### 9.7 从 624 行到 474 行，实际减少了什么
 
@@ -999,3 +1010,69 @@ os.environ['JINA_GRPC_SEND_BYTES'] = '0'
 ```
 
 在框架设计中，配置应通过显式参数传递而非隐式修改全局状态。由于 Jina 内部通过环境变量读取此配置，彻底修复需要改动 Jina 框架本身。识别这种「自己无法修复但值得知道的坏味道」也是学习的一部分。
+
+### 9.9 重构中的向后兼容：改实现不改接口
+
+本次重构的约束条件：**不能修改任何外部接口**。以下接口在重构前后完全不变：
+
+| 接口 | 调用方 | 保持方式 |
+|------|--------|---------|
+| `from clip_server.executors.clip_torch import CLIPEncoder` | conftest, YAML | 类名和模块路径不变 |
+| `CLIPEncoder(name=..., device=..., ...)` | Flow 构造 | 构造函数签名不变 |
+| `jtype: CLIPEncoder` + `py_modules: [clip_server.executors.clip_torch]` | Flow YAML | Jina 发现机制不变 |
+| `Client(server)` | benchmark, 用户代码 | 构造函数签名不变（新增 `close` 等不破坏旧用法） |
+| `CLIPModel(name)` → `CLIPModel.create(name)` | test_model.py | 旧接口报 `TypeError` 而非静默失败 |
+
+**核心原则**：
+- 重构只改内部实现，不改变外部行为
+- 如果必须改接口，用 `TypeError` 或 `DeprecationWarning` 引导迁移
+- 新增方法（`close`、`__enter__`）是原接口的超集，不破坏向后兼容
+
+### 9.10 `_post_init` 钩子：解决 `runtime_args` 时序问题
+
+在抽取基类时遇到一个关键问题：`torch.set_num_threads()` 需要在 `runtime_args.replicas` 可用后执行，而 `runtime_args` 由 Jina 框架在 `Executor.__init__()` 中设置。
+
+原始代码的顺序：
+```python
+class CLIPEncoder(Executor):
+    def __init__(self, ...):
+        super().__init__(**kwargs)          # ← runtime_args 在这里被设置
+        ...
+        replicas = self.runtime_args.replicas  # ← 可以安全访问
+        torch.set_num_threads(...)
+        self._model = CLIPModel(...)        # ← 模型构建
+```
+
+如果子类在 `super().__init__()` 之前就做线程管理，`self.runtime_args` 还不存在。解决方案是引入 `_post_init()` 钩子：
+
+```python
+class BaseCLIPEncoder(Executor):
+    def __init__(self, ...):
+        super().__init__(**kwargs)           # ← runtime_args 就位
+        self._pool = ThreadPool(...)
+        self._device = self._resolve_device(device)
+        self._model = self._build_model(...) # ← 模型构建
+        ...
+        self._post_init(**kwargs)            # ← 子类钩子，runtime_args 已可用
+
+class CLIPEncoder(BaseCLIPEncoder):
+    def _post_init(self, **kwargs):
+        replicas = getattr(self.runtime_args, 'replicas', 1)
+        torch.set_num_threads(...)           # ← 此时 runtime_args 必定可用
+```
+
+**通用模式**：当框架基类的初始化顺序与子类需求冲突时，提供一个尾部钩子比要求子类在 `__init__` 中「某行前做 A、某行后做 B」更安全。类似模式见于 Django 的 `populate()`、unittest 的 `setUp()`。
+
+### 9.11 重构效果一览
+
+| 维度 | 重构前 | 重构后 |
+|------|--------|--------|
+| executor 文件数 | 3（各自独立） | 4（1 基类 + 3 子类） |
+| `encode()` 实现次数 | 3 份副本 | 1 份（基类） |
+| `rank()` 实现次数 | 3 份副本 | 1 份（基类） |
+| 新增后端成本 | ~200 行 | ~70 行 |
+| 裸 `except:` | 5 处 | 0 处 |
+| 客户端生命周期 | 无管理（依赖 GC） | `close()` + context manager |
+| 模型工厂 | `__new__` 黑魔法 | `create()` 类方法 |
+| 代码行数 | 624 | 474 + 模板 78 |
+| 修改点收敛 | 修 encode bug 需改 3 处 | 修 encode bug 改 1 处 |
