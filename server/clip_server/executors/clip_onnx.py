@@ -82,6 +82,11 @@ class CLIPEncoder(BaseCLIPEncoder):
             dtype=kwargs.get('dtype'),
         )
 
+    def _cleanup_model(self):
+        for attr in ('_visual_session', '_textual_session'):
+            if hasattr(self._model, attr):
+                delattr(self._model, attr)
+
     def _encode_image_batch(self, batch_data: dict):
         return self._model.encode_image(batch_data)
 

@@ -83,6 +83,12 @@ class CLIPEncoder(BaseCLIPEncoder):
     def _encode_text_batch(self, batch_data: dict) -> np.ndarray:
         return self._model.encode_text(**batch_data).cpu().numpy().astype(np.float32)
 
+    def _cleanup_model(self):
+        import torch
+
+        del self._model
+        torch.cuda.empty_cache()
+
     @property
     def _inference_context(self):
         return torch.inference_mode()

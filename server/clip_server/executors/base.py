@@ -225,8 +225,17 @@ class BaseCLIPEncoder(Executor):
 
         return docs
 
+    def _cleanup_model(self):
+        """子类可选覆盖：释放模型专属资源（ONNX session / TRT engine / CUDA cache）。"""
+
     async def close(self):
-        if hasattr(self, '_pool') and self._pool:
+        try:
+            self._cleanup_model()
+        except Exception:
+            pass
+
+        if self._pool:
             self._pool.terminate()
             self._pool.join()
+
         await super().close()
